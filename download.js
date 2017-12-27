@@ -1,77 +1,58 @@
 const puppeteer = require('puppeteer')
-const fs = require('fs')
-const URL = require('url').URL
+var fs = require('fs')
 const md5 = require('md5')
-var mysql = require('mysql')
+var mysql = require('promise-mysql')
+var pool = mysql.createPool({
+  host: 'localhost',
+  user: 'root',
+  password: 'jinjun123',
+  database: 'soup',
+  connectionLimit: 10
+})
 
-if (!fs.existsSync('G:/csv')) {
-  fs.mkdirSync('G:/csv')
-}
-if (!fs.existsSync('G:/csv/full')) {
-  fs.mkdirSync('G:/csv/full')
-}
-if (!fs.existsSync('G:/csv/description')) {
-  fs.mkdirSync('G:/csv/description')
-}
-if (!fs.existsSync('html')) {
-  fs.mkdirSync('html')
-}
+if (!fs.existsSync('G:/csv')) { fs.mkdirSync('G:/csv') }
+if (!fs.existsSync('G:/csv/full')) { fs.mkdirSync('G:/csv/full') }
+if (!fs.existsSync('G:/csv/description')) { fs.mkdirSync('G:/csv/description') }
+if (!fs.existsSync('html')) { fs.mkdirSync('html') }
 
 (async () => {
-  global.browser = await puppeteer.launch({executablePath: 'E:/chrome-win32/chrome.exe', headless: false})
-  var connection = mysql.createConnection({
-    host: '106.14.212.44',
-    user: 'root',
-    password: 'jinjun123',
-    database: 'soup'
+  global.browser = await puppeteer.launch({executablePath: 'E:/chromium/chrome.exe', headless: false})
+  var rows = await pool.query('SELECT * FROM items WHERE mid=601 order by list_time DESC limit 20')
+
+  rows.forEach(function (row, index, arr) {
+    download(row)
   })
-  connection.connect()
-  connection.query('SELECT xz_id,picture,description,seller_code,store_name from items where store_name = 8307 and mid = 601 limit 10', function (error, rows, fields) {
-    if (error) throw error
-    rows.forEach(function (value, index, arr) {
-      value['picture'] = JSON.parse(value['picture'])
-      value['description'] = JSON.parse(value['description'])
-      let h1 = '<div class="picture"><img src="' + value['picture'].join('"><img src="') + '"></div>'
-      let h2 = '<div class="description"><img src="' + value['description'].join('"><img src="') + '"></div>'
-      fs.writeFileSync('html/' + value['xz_id'] + '.html', h1 + h2)
-      downloadImgs(value)
-    })
-  })
-  connection.end()
 })()
 
+var download = async function (row) {
+  var xz_id = row['xz_id']
+  var store_name = row['store_name']
+  var seller_code = row['seller_code']
+  var picture = JSON.parse(row['picture'])
+  var description = JSON.parse(row['description'])
+  var html = '<div class="picture"><img src="' + picture.join('"><img src="') + '"></div><div class="description"><img src="' + description.join('"><img src="') + '"></div>'
+  var file_path = `html/${xz_id}.html`
+  fs.writeFileSync(file_path, html)
 
-var isHasElement = function (arr, value) {
-  for (let i = 0, vlen = arr['picture'].length; i < vlen; i++) {
-    if (arr['picture'][i] === value) {
-      return ['G:/csv/full', 'G:/csv/full/' + md5(arr['xz_id'] + '-' + i.toString()) + '.TBI']
-    }
-  }
-  for (let i = 0, vlen = arr['description'].length; i < vlen; i++) {
-    if (arr['description'][i] === value) {
-      let split = value.split('.')
-      let path = 'G:/csv/description/' + arr['store_name'] + '-' + arr['seller_code'] + arr['xz_id']
-      let name = i + '.' + split[split.length - 1]
-      return [path, path + '/' + name]
-    }
-  }
-  return -1
-}
+  var path = 'G:/csv/description/' + store_name + '-' + seller_code + '-' + xz_id
+  if (!fs.existsSync(path)) { fs.mkdirSync(path) }
 
-var downloadImgs = async function (result) {
-  let page = await browser.newPage()
+ 	var page = await browser.newPage()
   page.on('response', async (resp) => {
-    let url = new URL(resp.url)
-    if (url['href'] !== 'file:///G:/node/html/' + result['xz_id'] + '.html') {
-      let res = isHasElement(result, url['href'])
-      if (res !== -1) {
-        if (!fs.existsSync(res[0])) {
-          fs.mkdirSync(res[0])
-        }
-        const buffer = await resp.buffer()
-        fs.writeFileSync(res[1], buffer)
+    var url = resp.url()
+    if (url.indexOf('html') === -1) {
+      var key = picture.indexOf(url)
+      var name = ''
+      if (key > -1) {
+        name = 'G:/csv/full/' + md5(xz_id + '-' + key) + '.TBI'
+      } else {
+        key = description.indexOf(url)
+        var split = url.split('.')
+        name = path + '/' + key + '.' + split[split.length - 1]
       }
+      const buffer = await resp.buffer()
+      fs.writeFileSync(name, buffer)
     }
-  })  
-  await page.goto('file:///G:/node/html/' + result['xz_id'] + '.html')
+  })
+  	await page.goto('file:///G:/node/' + file_path)
 }
